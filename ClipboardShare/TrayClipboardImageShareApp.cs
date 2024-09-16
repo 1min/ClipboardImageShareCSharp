@@ -1,6 +1,8 @@
-﻿using Newtonsoft.Json.Linq;
+﻿using ClipboardShare.GoogleDrive;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -15,7 +17,7 @@ namespace ClipboardShare
     public class TrayClipboardImageShareApp : ApplicationContext
     {
         private NotifyIcon notifyIcon;
-        private string _ip = "127.0.0.1";
+        private bool isClipboardOperation;
 
         public TrayClipboardImageShareApp()
         {
@@ -37,7 +39,6 @@ namespace ClipboardShare
 
             // 아이콘을 트레이에 표시
             notifyIcon.Visible = true;
-            SetPublicIP();
         }
 
         private void NotifyMsg(string title, string message, ToolTipIcon icon, int time)
@@ -49,94 +50,44 @@ namespace ClipboardShare
             notifyIcon.ShowBalloonTip(time);
         }
 
-        private void SetPublicIP()
+        private async void ClipboardImagetoServer_Click(object sender, EventArgs e)
         {
             try
             {
-                // http://ipinfo.io/ip 일일사용량 어느정도는 무료
-                _ip = new WebClient().DownloadString("http://ipinfo.io/ip").Trim();
+                await RunService();
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
-                MessageBox.Show("공인 ip를 얻어올 수 없습니다." + ex.Message);
-            }
-        }
-
-        private void ClipboardImagetoServer_Click(object sender, EventArgs e)
-        {
-            // 클립보드에 이미지가 있는지 확인
-            if (Clipboard.ContainsImage())
-            {
-                // 클립보드에서 이미지 가져오기
-                Image imageFromClipboard = Clipboard.GetImage();
-
-                // 이미지를 Base64로 인코딩
-                string base64Image = ImageToBase64(imageFromClipboard);
-
-                // Google Apps Script로 전송
-                SendToGoogleAppsScript(base64Image);
-
-                // NotifyMsg("전송 성공", "이미지를 성공적으로 Google Apps Script로 전송했습니다.", ToolTipIcon.Info, 5000);
-            }
-            else
-            {
-                NotifyMsg("클립보드 복사 실패", "클립보드에 이미지가 없습니다.", ToolTipIcon.Warning, 5000);
+                MessageBox.Show(ex.Message, "FAIL");
             }
         }
 
-        private string ImageToBase64(Image image)
+        private async Task RunService()
         {
-            using (MemoryStream ms = new MemoryStream())
+            try
             {
-                // 이미지를 스트림에 쓰기
-                image.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-
-                // 스트림을 byte 배열로 변환
-                byte[] imageBytes = ms.ToArray();
-
-                // byte 배열을 Base64로 인코딩
-                string base64String = Convert.ToBase64String(imageBytes);
-
-                return base64String;
-            }
-        }
-
-        private void SendToGoogleAppsScript(string base64Image)
-        {
-            // Google Apps Script 웹 앱 URL
-            string scriptUrl = "https://script.google.com/macros/s/AKfycbyjITeBrk_4bsGRy9jiczwB-KPoYwOZZxnsrr0hYJpxqPLOWEMjDBo96VsMLHssBwlN/exec";
-
-            // JSON 형태의 데이터 생성
-            JObject json = new JObject();
-            json.Add("metaData", "data:image/png;base64");
-            json.Add("data", base64Image);
-            json.Add("ip", _ip);
-
-            String jsonData = json.ToString();
-
-            // Google Apps Script로 POST 요청 보내기
-            using (var client = new System.Net.WebClient())
-            {
-                client.Headers.Add("Content-Type", "application/json");
-                string response = client.UploadString(scriptUrl, "POST", jsonData);
-
-                // JSON 문자열을 JSON 객체로 변환
-                JObject jsonObject = JObject.Parse(response);
-
-                // 변환된 JSON 객체를 사용하여 필요한 작업 수행
-                bool isSuccess = (bool)jsonObject["success"];
-                string link = jsonObject["link"].ToString();
-
-                if (isSuccess)
+                if (isClipboardOperation)
                 {
-                    // 텍스트를 클립보드에 복사
-                    Clipboard.SetText(link);
-                    NotifyMsg("복사 성공", "클립보드에 공유한 이미지 url을 복사하였습니다.", ToolTipIcon.Info, 5000);
+                    throw new Exception("클립보드 전송이 이미 실행중입니다.");
                 }
-                else
-                {
-                    NotifyMsg("업로드 실패", "클립보드를 서버에 업로드하는 작업이 실패하였습니다.", ToolTipIcon.Warning, 5000);
-                }
+
+                isClipboardOperation = true;
+
+                String url = await GoogleDriveService.Instance.UploadImageFromClipboardToGoogleDrive();
+                Clipboard.SetText(url);
+                MessageBox.Show("Upload And URL Copy Success", "SUCCESS");
+            }
+            catch (AggregateException asyncEx)
+            {
+                MessageBox.Show(asyncEx.Message, "FAIL");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "FAIL");
+            }
+            finally
+            {
+                isClipboardOperation = false;
             }
         }
 
